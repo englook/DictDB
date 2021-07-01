@@ -104,7 +104,7 @@ class SharedStorage(ABC):
 
 	def values(self):
 		cur = self.conn.execute(f'SELECT value FROM {self.table};');
-		return [row[0] for row in cur.fetchall()]
+		return [json.loads(row[0]).get("data") for row in cur.fetchall()]
 
 	def items(self):
 		cur = self.conn.execute(f'SELECT key, value FROM {self.table};');
@@ -144,6 +144,7 @@ class SharedStorage(ABC):
 		self.commit()
 
 	def fromkeys(self, keys, value):
+		self._check_read_only()
 		for key in keys:
 			self._set(key, value)
 		self.commit()
@@ -155,10 +156,10 @@ class SharedStorage(ABC):
 		if key and self._default_value is None:
 			self._default_key = key
 			self._default_value = value
-			self.__set(self._default_key, self._default_value)
+			self._set(self._default_key, self._default_value)
 			self.commit()
 			return self._default_value
-		return self._default_value
+		return {"data" : self._default_value}
 
 	def pop(self, key, default=None):
 		self._check_read_only()
@@ -191,7 +192,8 @@ class SharedStorage(ABC):
 
 	def clear(self):
 		self._check_read_only()
-		self.conn.execute(f'TRUNCATE TABLE {self.table};')
+		self.conn.execute(f'DELETE FROM {self.table};')
+		self.commit()
 
 	def begin(self):
 		if self.active_context:
