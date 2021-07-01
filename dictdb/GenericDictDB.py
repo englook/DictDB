@@ -2,7 +2,6 @@ import logging
 from colorama import Fore, Style
 from dictdb.StorageDict import SharedStorage
 
-
 log = logging.getLogger('GenericDB')
 
 
