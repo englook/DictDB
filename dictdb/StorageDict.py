@@ -3,20 +3,20 @@ import time
 import json
 import sqlite3
 import threading
-import settings
 from pathlib import Path
 from abc import ABC, abstractmethod
+from dictdb.SqliteThreadWork import SqliteThreadWork
 
 
-class WBStorageException(Exception):
+class StorageException(Exception):
 	pass
 
 
-class WBStorageReadOnlyException(WBStorageException):
+class StorageReadOnlyException(StorageException):
 	pass
 
 
-class WBSharedStorageConnectionException(WBStorageException):
+class SharedStorageConnectionException(StorageException):
 	pass
 
 
@@ -25,7 +25,9 @@ class SharedStorage(ABC):
 		Class responsible for implementing a database
 		curly based on python dictionary.
 	"""
-	def __init__(self, database, storage, read_only=False, expires=60, type_key="timestamp"):
+
+	@abstractmethod
+	def __init__(self, database, storage, read_only=False, expires=120, type_key="text"):
 		self.conn = None
 		self.database = database
 		self.storage = storage
@@ -34,10 +36,11 @@ class SharedStorage(ABC):
 		self.table = f'tb_{storage}'
 		self.active_context = False
 		self.type_key = type_key
+		self._default_value = None
 
 		if read_only:
 			if not Path(database).is_file():
-				raise WBStorageException(
+				raise StorageException(
 					f'database "{database}" not found.')
 
 		self.conn = sqlite3.connect(
@@ -76,7 +79,7 @@ class SharedStorage(ABC):
 
 		if not cur.fetchone() and self.read_only:
 			self.rollback()
-			raise WBStorageException(
+			raise StorageException(
 				f'Storage "{self.storage}" not found in database "{self.database}".')
 
 		if not self.read_only:
@@ -113,7 +116,7 @@ class SharedStorage(ABC):
 		      f'VALUES (:key, :value, COALESCE((SELECT inserted ' \
 		      f'FROM {self.table} WHERE key = :key), :now), :now);'
 		self.conn.execute(sql, {'key': key, 'now': int(time.time()),
-			'value': json.dumps({'data': value})})
+				'value': json.dumps({'data': value})})
 
 	def set(self, key, value):
 		self._check_read_only()
@@ -131,16 +134,31 @@ class SharedStorage(ABC):
 		cur = self.conn.execute(f'SELECT value FROM {self.table} WHERE key = ?;', (key,))
 		row = cur.fetchone()
 		if not row:
-			if default is None:
-				raise KeyError(f'storage key "{key}" not found.')
 			return default
 		return json.loads(row[0]).get('data')
 
-	def update(self, dic):
+	def update(self, dict):
 		self._check_read_only()
-		for k, v in dic.items():
+		for k, v in dict.items():
 			self._set(k, v)
 		self.commit()
+
+	def fromkeys(self, keys, value):
+		for key in keys:
+			self._set(key, value)
+		self.commit()
+
+	def copy(self):
+		return self
+
+	def setdefault(self, key, value=None):
+		if key and self._default_value is None:
+			self._default_key = key
+			self._default_value = value
+			self.__set(self._default_key, self._default_value)
+			self.commit()
+			return self._default_value
+		return self._default_value
 
 	def pop(self, key, default=None):
 		self._check_read_only()
@@ -155,6 +173,13 @@ class SharedStorage(ABC):
 			if default is None:
 				raise e
 			return default
+
+	def popitem(self):
+		self._check_read_only()
+		cur = self.conn.execute(f'DELETE FROM {self.table} ORDER BY inserted DESC LIMIT 1;')
+		self.commit()
+		if not cur.rowcount and not ignore_error:
+			raise KeyError(f'storage key "{key}" not found.')
 
 	def age(self, key):
 		cur = self.conn.execute(f'SELECT inserted, updated FROM {self.table} WHERE key = ?;', (key,))
@@ -229,5 +254,33 @@ class SharedStorage(ABC):
 		        f"read_only={self.read_only}, "
 		        f"max_age={self.expires}, "
 		        f"nkeys={self.count()})")
+
+
+
+class ThreadedSharedStorage(SharedStorage, SqliteThreadWork):
+
+	def __init__(self, database, storage, read_only=False, expires=0, type_key="text"):
+		self.database = database
+		self.storage = storage
+		self.read_only = read_only
+		self.expires = expires
+		self.table = f'tb_{storage}'
+		self.active_context = False
+		self.type_key = type_key
+
+		if read_only:
+			if not Path(database).is_file():
+				raise StorageException(
+					f'database "{database}" not found.')
+		SqliteThreadWork.__init__(self, database, storage)
+		self._initialize()
+
+	@property
+	def usetable(self):
+		return self.table
+
+	@usetable.setter
+	def usetable(self, table):
+		self.table = table
 
 # end-of-file
