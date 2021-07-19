@@ -59,8 +59,8 @@ class DictDBTester(unittest.TestCase):
 		"""
 		Returns a copy of the dictionary.
 		"""
-		#self.new_cache = self.cache.copy()
-		#self.assertDictEqual(self.cache, self.new_cache)
+		self.new_cache = self.cache.copy()
+		self.assertDictEqual(self.cache, self.new_cache)
 
 	def test_pop(self):
 		"""
